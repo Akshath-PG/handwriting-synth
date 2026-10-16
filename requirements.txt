@@ -1,0 +1,8 @@
+numpy
+opencv-python-headless>=4.8,<5; sys_platform == 'darwin'   # OpenCV 5 breaks inside the Mac app
+opencv-python-headless; sys_platform != 'darwin'
+pillow
+reportlab        # template generator
+pdfplumber       # reading PDFs
+python-docx      # reading Word files
+flask            # the point-and-click app

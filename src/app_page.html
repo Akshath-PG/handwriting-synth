@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Handwriting Synth</title>
+<style>
+:root{--bg:#f6f3ec;--card:#fff;--ink:#22304f;--mut:#6a7388;--acc:#2f4a9e;--accd:#243a7e;--ok:#1d7a46;--bad:#b3261e;--line:#e3ded2}
+@media(prefers-color-scheme:dark){:root{--bg:#161a24;--card:#1f2432;--ink:#e8ebf5;--mut:#9aa3ba;--acc:#6f8cf0;--accd:#5a78dc;--ok:#52c585;--bad:#ff8a80;--line:#2f3547}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+header{padding:28px 20px 8px;text-align:center}h1{margin:0;font-size:30px}header p{margin:6px 0 0;color:var(--mut)}
+main{max-width:860px;margin:0 auto;padding:12px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin:18px 0}
+.step{display:flex;gap:14px;align-items:center;margin-bottom:8px}.num{flex:none;width:44px;height:44px;border-radius:50%;background:var(--acc);color:#fff;display:grid;place-items:center;font-weight:700;font-size:22px}
+h2{margin:0;font-size:22px}.card p{margin:8px 0;color:var(--mut)}
+button,.btn{background:var(--acc);color:#fff;border:0;border-radius:12px;padding:14px 22px;font-size:18px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{background:var(--accd)}button:disabled{opacity:.5;cursor:default}
+.ghost{background:transparent;color:var(--acc);border:2px solid var(--acc)}.small{padding:6px 10px;font-size:15px;border-radius:8px}
+input[type=file]{display:none}.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:22px;text-align:center;color:var(--mut);cursor:pointer}.drop.on{border-color:var(--acc);color:var(--ink)}
+.thumbs{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}.th{width:150px;border:1px solid var(--line);border-radius:12px;padding:8px;text-align:center;font-size:15px}
+.th img{width:100%;height:150px;object-fit:cover;border-radius:8px}.th b{display:block;margin:4px 0}
+.msg{padding:12px 14px;border-radius:10px;margin-top:12px;font-size:17px}.err{background:rgba(179,38,30,.12);color:var(--bad)}.good{background:rgba(29,122,70,.12);color:var(--ok)}.info{background:rgba(47,74,158,.1);color:var(--ink)}
+ul{margin:8px 0 8px 20px;color:var(--mut)}li{margin:3px 0}
+img.sheet,img.prev{max-width:100%;max-height:640px;object-fit:contain;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:#fff}
+select{font-size:18px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.spin{display:inline-block;width:18px;height:18px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 1s linear infinite;vertical-align:-3px;margin-right:8px}@keyframes s{to{transform:rotate(360deg)}}
+.hide{display:none}.tag{font-size:14px;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--mut);margin-left:8px}
+</style></head><body>
+<header><h1>✍️ Handwriting Synth</h1><p>Turn any document into your own handwriting. Everything stays on your computer.</p></header>
+<main>
+
+<section class="card" id="c1">
+ <div class="step"><div class="num">1</div><h2>Print the template and write on it</h2></div>
+ <p>This sheet has a small box for every letter, number and symbol. You write each one once, in your normal handwriting.</p>
+ <ul>
+  <li>Print it on normal A4 paper (4 pages).</li>
+  <li>Use a dark pen. Write <b>one character per box</b>, sitting on the solid line.</li>
+  <li>Keep the writing inside the box. Do not touch the four black squares.</li>
+ </ul>
+ <div class="row"><a class="btn" href="/template.pdf">⬇ Download the template</a></div>
+</section>
+
+<section class="card" id="c2">
+ <div class="step"><div class="num">2</div><h2>Take photos of your pages and upload them</h2><span class="tag" id="libtag"></span></div>
+ <p>Photograph each page flat on a table, in even light, with all 4 black squares visible. Choose all 4 photos together, then make sure they are in page order (1, 2, 3, 4).</p>
+ <label class="drop" id="drop" for="photos">📷 Click here to choose your photos<br><small>or drag them onto this box</small></label>
+ <input type="file" id="photos" accept="image/*" multiple>
+ <div class="thumbs" id="thumbs"></div>
+ <div class="row"><button id="calBtn" class="hide">Learn my handwriting</button></div>
+ <div id="calOut"></div>
+</section>
+
+<section class="card" id="c3">
+ <div class="step"><div class="num">3</div><h2>Choose a document</h2></div>
+ <p>Pick a PDF, a Word file (.docx) or a text file. You get it back in your handwriting.</p>
+ <label class="drop" id="drop2" for="doc">📄 Click here to choose a document<br><small id="docname">PDF, Word (.docx), .md or .txt</small></label>
+ <input type="file" id="doc" accept=".pdf,.docx,.md,.txt">
+ <div class="row">
+   <label>Ink colour&nbsp;
+   <select id="ink"><option value="blue">Blue</option><option value="black">Black</option><option value="blue-black">Blue-black</option><option value="red">Red</option><option value="green">Green</option></select></label>
+   <label id="sampleWrap" class="hide"><input type="checkbox" id="sample"> use the sample handwriting</label>
+ </div>
+ <div class="row"><button id="goBtn" disabled>Make it handwritten</button></div>
+ <div id="goOut"></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let photos=[];
+const msg=(el,cls,html)=>{el.innerHTML='<div class="msg '+cls+'">'+html+'</div>'};
+async function refresh(){const s=await (await fetch('/api/state')).json();
+ $('libtag').textContent=s.has_library?'your handwriting is saved ✓':'';
+ $('sampleWrap').classList.toggle('hide',!s.has_library);
+ if(!s.has_library){msg($('goOut'),'info','You have not done step 2 yet, so the <b>sample handwriting</b> will be used. You can try the app that way.')}}
+function drawThumbs(){const t=$('thumbs');t.innerHTML='';photos.forEach((f,i)=>{const d=document.createElement('div');d.className='th';
+ d.innerHTML='<img src="'+URL.createObjectURL(f)+'"><b>Page '+(i+1)+'</b>';
+ const up=document.createElement('button');up.className='ghost small';up.textContent='◀';up.onclick=()=>{if(i>0){[photos[i-1],photos[i]]=[photos[i],photos[i-1]];drawThumbs()}};
+ const dn=document.createElement('button');dn.className='ghost small';dn.textContent='▶';dn.onclick=()=>{if(i<photos.length-1){[photos[i+1],photos[i]]=[photos[i],photos[i+1]];drawThumbs()}};
+ d.append(up,' ',dn);t.append(d)});$('calBtn').classList.toggle('hide',!photos.length)}
+function setPhotos(list){photos=[...list].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));drawThumbs();$('calOut').innerHTML='';
+ if(photos.length!==4)msg($('calOut'),'info','The template has 4 pages, so you need exactly 4 photos. You chose '+photos.length+'.')}
+$('photos').onchange=e=>setPhotos(e.target.files);
+['drop','drop2'].forEach(id=>{const d=$(id);d.ondragover=e=>{e.preventDefault();d.classList.add('on')};d.ondragleave=()=>d.classList.remove('on');
+ d.ondrop=e=>{e.preventDefault();d.classList.remove('on');if(id==='drop')setPhotos(e.dataTransfer.files);else{$('doc').files=e.dataTransfer.files;$('doc').onchange()}}});
+$('calBtn').onclick=async()=>{const b=$('calBtn');b.disabled=true;msg($('calOut'),'info','<span class="spin"></span>Learning your handwriting… this takes about a minute.');
+ const fd=new FormData();photos.forEach(f=>fd.append('photos',f));
+ try{const r=await (await fetch('/api/calibrate',{method:'POST',body:fd})).json();
+  if(!r.ok){msg($('calOut'),'err','⚠ '+r.error)}else{let h='✅ Done! Your handwriting is saved. Look at the letters below: they should all look like yours.';
+   if(r.missing)h+='<br><br>These characters were left empty and will be skipped: <b>'+r.missing+'</b>';
+   if(r.warnings.length)h+='<br><br>Check these boxes: '+r.warnings.join('; ');
+   h+='<br><img class="sheet" src="'+r.sheet+'">';msg($('calOut'),'good',h);refresh()}}
+ catch(e){msg($('calOut'),'err','⚠ Could not reach the app. Is its window still open?')}b.disabled=false};
+$('doc').onchange=()=>{const f=$('doc').files[0];$('docname').textContent=f?f.name:'PDF, Word (.docx), .md or .txt';$('goBtn').disabled=!f;};
+$('goBtn').onclick=async()=>{const b=$('goBtn');b.disabled=true;msg($('goOut'),'info','<span class="spin"></span>Writing your document by hand… long documents can take a few minutes.');
+ const fd=new FormData();fd.append('doc',$('doc').files[0]);fd.append('ink',$('ink').value);fd.append('sample',$('sample').checked?'1':'0');
+ try{const r=await (await fetch('/api/convert',{method:'POST',body:fd})).json();
+  if(!r.ok){msg($('goOut'),'err','⚠ '+r.error);b.disabled=false;return}
+  const t=setInterval(async()=>{const j=await (await fetch('/api/job/'+r.job)).json();
+   if(j.state==='running')return;clearInterval(t);b.disabled=false;
+   if(j.state==='error'){msg($('goOut'),'err','⚠ '+j.msg)}
+   else{let h='✅ Finished!<div class="row"><a class="btn" href="/file/outputs/'+j.out+'">⬇ Download the handwritten PDF</a></div>';
+    if(j.msg)h+='<p>'+j.msg+'</p>';h+='<img class="prev" src="/file/outputs/'+j.preview+'?t='+Date.now()+'">';msg($('goOut'),'good',h)}},1500)}
+ catch(e){msg($('goOut'),'err','⚠ Could not reach the app. Is its window still open?');b.disabled=false}};
+refresh();
+</script></body></html>

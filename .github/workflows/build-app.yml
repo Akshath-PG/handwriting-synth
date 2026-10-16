@@ -1,0 +1,53 @@
+name: Build downloadable apps
+on:
+  workflow_dispatch:          # run by hand from the "Actions" tab
+  push:
+    tags: ['v*']              # or push a tag like v1.0.0 to publish a Release with the downloads
+permissions:
+  contents: write
+jobs:
+  test:                         # runs the whole pipeline on every OS; fails loudly if something breaks
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt -r tests/requirements.txt
+      - run: python tests/e2e.py
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, name: windows, exe: dist/HandwritingSynth/HandwritingSynth.exe}
+          - {os: macos-latest,   name: macos,   exe: dist/HandwritingSynth/HandwritingSynth}
+          - {os: ubuntu-latest,  name: linux,   exe: dist/HandwritingSynth/HandwritingSynth}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt -r tests/requirements.txt pyinstaller
+      - run: python packaging/build.py
+      - name: Smoke-test the packaged app
+        run: python tests/smoke_app.py ${{ matrix.exe }}
+      - name: Zip (Windows)
+        if: matrix.name == 'windows'
+        run: Compress-Archive -Path dist/HandwritingSynth -DestinationPath HandwritingSynth-windows.zip
+      - name: Zip (macOS and Linux)
+        if: matrix.name != 'windows'
+        run: cd dist && zip -qr ../HandwritingSynth-${{ matrix.name }}.zip HandwritingSynth
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HandwritingSynth-${{ matrix.name }}
+          path: HandwritingSynth-${{ matrix.name }}.zip
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: HandwritingSynth-${{ matrix.name }}.zip

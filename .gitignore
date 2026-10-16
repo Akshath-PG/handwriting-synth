@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+work/*
+!work/.gitkeep
+dist/
+build/
+*.spec
