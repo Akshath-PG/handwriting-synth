@@ -1,39 +1,70 @@
 """Create fake phone photos of a filled-in template, so the calibration can be tested without a human.
 
-Uses an existing glyph library as the 'handwriting', writes one character per box on the rasterised template,
-then makes it look like a phone photo (rotation, perspective, uneven lighting, blur, noise, JPEG).
+Uses an existing glyph library as the 'handwriting': one character per character box, whole words (joined up) in
+word boxes, and the grey guide in figure boxes is 'traced' with a pen. Then each page is made to look like a phone
+photo (rotation, perspective, uneven lighting, blur, noise, JPEG).
 
-usage: python3 tests/simulate_photos.py TEMPLATE.pdf SOURCE_LIB.pkl OUTDIR [seed]
+usage: python3 tests/simulate_photos.py TEMPLATE.pdf SOURCE_LIB.pkl OUTDIR [seed] [--shuffle]
+       the template's .json (written next to a document template) is used when present
 """
-import os, sys, subprocess, random
+import os, sys, random
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 import numpy as np, cv2
-import layout as L, charset
+import layout as L, plan as PL
 
 
-def main(tpl, lib, outdir, seed=1):
+def main(tpl, lib, outdir, seed=1, shuffle=False):
     os.environ['HW_LIB'] = lib
+    man = PL.manifest_path(tpl)
+    plan = PL.load(man) if os.path.exists(man) else PL.universal_plan()
+    os.environ['HW_STYLE'] = 'cursive' if plan.get('style') in ('cursive', 'semi') else plan.get('style', 'print')
     import hw_render as H
     os.makedirs(outdir, exist_ok=True)
     import pypdfium2 as pdfium
     rasters = [np.array(p.render(scale=300 / 72.0).to_pil().convert('RGB')) for p in pdfium.PdfDocument(tpl)]
     rng = random.Random(seed)
-    pages = charset.pages(L.PER_PAGE)
     s = 94.0 / H.CAP                                          # capital ~ 8 mm
     written = 0
-    for pi, chars in enumerate(pages):
+    names = list(range(1, len(plan['pages']) + 1))
+    if shuffle:
+        rng.shuffle(names)
+    for pi, cells in enumerate(plan['pages']):
         img = rasters[pi].astype(np.float32)
         img = cv2.resize(img, (L.PAGE_W, L.PAGE_H))
         page = H.Page(seed=pi)
         page.img = img
         pen = H.Pen(page, cap=94, jitter=1.0, seed=pi + 5)
-        for i, ch in enumerate(chars):
-            if ch not in H.LIB:
-                continue
-            x0, y0, x1, y1 = L.write_rect_px(i)
-            w = H.META[ch]['w'] * s
-            pen.draw_glyph(ch, x0 + (x1 - x0 - w) / 2 + rng.uniform(-25, 25), L.baseline_px(i) + rng.uniform(-6, 6), s)
-            written += 1
+        for cell in cells:
+            x0, y0, x1, y1 = PL.write_rect_px(cell)
+            if cell['k'] == 'char':
+                ch = cell['t']
+                if ch not in H.LIB:
+                    continue
+                w = H.META[ch]['w'] * s
+                pen.draw_glyph(ch, x0 + (x1 - x0 - w) / 2 + rng.uniform(-25, 25), PL.baseline_px(cell) + rng.uniform(-6, 6), s)
+                written += 1
+            elif cell['k'] == 'word':
+                w = pen.width(cell['t'], s * 0.9, raw=True)
+                if w > x1 - x0 - 10:
+                    continue
+                pen.run(cell['t'], x0 + (x1 - x0 - w) / 2, PL.baseline_px(cell) + rng.uniform(-5, 5), s * 0.9, raw=True)
+                written += 1
+            elif cell['k'] == 'sentence':                 # running text: a bit smaller and faster than the boxes
+                pen.run(cell['t'], x0 + 30 + rng.uniform(0, 40), PL.baseline_px(cell) + rng.uniform(-4, 4), s * 0.82, raw=True)
+                written += 1
+            elif cell['k'] == 'formula':
+                H.Pen.MARKUP = True
+                w = pen.width(cell['t'], s * 0.75)
+                pen.run(cell['t'], x0 + max((x1 - x0 - w) / 2, 10), PL.baseline_px(cell), s * 0.75)
+                written += 1
+            elif cell['k'] == 'figure':                    # trace the grey guide: grey pixels become pen ink
+                region = page.img[y0:y1, x0:x1]
+                g = region.mean(axis=2)
+                guide = ((g < 235) & (g > 150)).astype(np.uint8) * 255
+                guide = cv2.dilate(guide, np.ones((2, 2), np.uint8))
+                M = np.float32([[1, 0, rng.uniform(-3, 3)], [0, 1, rng.uniform(-3, 3)]])
+                guide = cv2.warpAffine(guide, M, (guide.shape[1], guide.shape[0]))
+                page.blit(guide, x0, y0, strength=0.9)
         out = np.clip(page.img, 0, 255).astype(np.uint8)
         # --- desk photo
         Wd, Hd = 3000, 4000
@@ -56,9 +87,10 @@ def main(tpl, lib, outdir, seed=1):
         photo = cv2.GaussianBlur(photo, (0, 0), 1.1)
         photo += np.random.default_rng(pi).normal(0, 3.0, photo.shape)
         from imgio import imwrite
-        imwrite(os.path.join(outdir, 'photo_%d.jpg' % (pi + 1)), np.clip(photo, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 82])
-    print('simulated', len(pages), 'photos with', written, 'characters in', outdir)
+        imwrite(os.path.join(outdir, 'photo_%d.jpg' % names[pi]), np.clip(photo, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 82])
+    print('simulated', len(plan['pages']), 'photos with', written, 'characters/words in', outdir)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 1)
+    args = [a for a in sys.argv[1:] if a != '--shuffle']
+    main(args[0], args[1], args[2], int(args[3]) if len(args) > 3 else 1, shuffle='--shuffle' in sys.argv)

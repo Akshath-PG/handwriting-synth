@@ -1,12 +1,18 @@
 # handwriting-synth
 
-Turn **any PDF, Word, Markdown or text file** into pages written in **your own handwriting**, from a single printed template that you fill in once.
+Turn **any PDF, Word, Markdown or text file** into pages written in **your own handwriting**: print, cursive
+(joined-up), semi-cursive or block capitals, including its **pictures, diagrams and graphs**.
 
 ```
- print template ─► write 1 char per box ─► photograph pages ─► calibrate ─► your glyph library
-                                                                                   │
-        PDF / DOCX / MD / TXT ──► convert ──► handwritten PDF  ◄───────────────────┘
+ your document ─► choose a style ─► study the document ─► a template made for it (its letters, its most used
+                                                          words written joined-up, a few of its own sentences,
+                                                          its equations, a box to trace each figure)
+        print, fill in, photograph (any order) ─► calibrate ─► your glyph + word + drawing library
+                                                                              │
+        the document ──► convert (+ small human imperfections) ──► handwritten PDF
 ```
+
+![cursive](docs/cursive_example.png)
 
 > **No neural network is used.** Your handwriting is cut out of the photos once, character by character, and re-assembled with small random variations. It is classical image processing (OpenCV, NumPy, Pillow), so it is deterministic, needs no GPU and no training data, and runs in seconds.
 
@@ -19,12 +25,19 @@ Turn **any PDF, Word, Markdown or text file** into pages written in **your own h
 2. Unzip it, then double-click **HandwritingSynth** (`HandwritingSynth.exe` on Windows).
    * **Windows** may say *"Windows protected your PC"*: click **More info → Run anyway**. (The app is not code-signed.)
    * **Mac**: open the unzipped folder, right-click **HandwritingSynth** → **Open** → **Open**, the first time only (a Terminal window opens; keep it open).
-3. Your web browser opens a page with three big steps:
-   1. **Download the template**, print it, and write one character in each box.
-   2. **Upload photos** of the 4 pages. Click **Learn my handwriting** and check the letters shown.
-   3. **Choose a document** (PDF, Word, .md, .txt), pick an ink colour, click **Make it handwritten**, then **Download**.
+3. Your web browser opens a page with five steps:
+   1. **Choose your document** (PDF, Word, .md, .txt; for Markdown with pictures, select the pictures too).
+   2. **Choose your handwriting style**: Print, Cursive (joined-up), Semi-cursive or Block capitals, and click
+      **Study my document and make my template**. It tells you what the template contains.
+   3. **Download your template**, print it and fill it in: letters one per box, the listed words written in one go,
+      and trace each figure over its grey copy (or leave a figure box empty to have it sketched for you).
+   4. **Upload photos** of the pages, in any order. Click **Learn my handwriting** and check the glyph sheet.
+   5. Pick an ink colour and a **Human touch** level, click **Make it handwritten**, then **Download**.
 
-Everything runs on your own computer; nothing is uploaded to the internet. Your handwriting is saved in a folder called `HandwritingSynth` in your home folder, so you only do step 1 and 2 once. Keep the black window open while you use the app; close it to quit.
+Everything runs on your own computer; nothing is uploaded to the internet. Your handwriting is saved per style in a
+folder called `HandwritingSynth` in your home folder and grows with every template you fill in, so the next document
+may already be covered (the app tells you). The universal 174-character template is still available at the bottom of
+the page. Keep the black window open while you use the app; close it to quit.
 
 ![app](docs/app_screenshot.png)
 
@@ -62,12 +75,20 @@ Open `out.pdf`: that is a handwritten page.
 **4. Convert anything**
 ```bash
 python3 handwrite.py convert notes.pdf                       # also .docx .md .txt
-python3 handwrite.py convert report.docx -o report_hw.pdf --ink black
+python3 handwrite.py convert report.docx -o report_hw.pdf --ink black --human natural
+```
+
+**Or: a template made for one document, in cursive**
+```bash
+python3 handwrite.py template --doc report.pdf --style cursive -o report_tpl.pdf   # also writes report_tpl.json
+#   print, fill in, photograph every page (any order)
+python3 handwrite.py calibrate photos/*.jpg --template report_tpl.json              # -> work/lib_cursive.pkl
+python3 handwrite.py convert report.pdf --style cursive
 ```
 With no `--lib`, your `work/lib.pkl` is used if it exists, otherwise the bundled sample. The output goes next to the input file unless you pass `-o`.
 
 **Good to know**
-* Pictures and diagrams in a PDF are skipped; ruled tables work best. Look through the result before printing.
+* Pictures, diagrams and graphs are drawn by hand: your traced version from a document template, otherwise an automatic pen sketch. Ruled tables work best. Look through the result before printing.
 * Characters missing from your library are skipped and listed at the end of the run. To add more, edit `src/charset.py` and regenerate the template.
 * If the photos come out wrong (very dark or shadowed pages), retake them in better light or try `--threshold 0.78` on `calibrate`.
 * Self-test with no handwriting at all: `./tests/run_e2e.sh`.
@@ -153,31 +174,117 @@ The document is laid out by `doclib.Doc` (margin line, page numbers, wobbly rule
 | `\r{...}` | square root |
 | `\M{a,b;c,d}` | matrix |
 
-## 6. Repository layout
+## 6. Styles, document templates, figures and the human touch
+
+**Styles** (`src/styles.py`): `print`, `cursive`, `semi` (semi-cursive), `caps` (block capitals). A library remembers
+its style; each style has its own library file (`lib.pkl` for print, `lib_cursive.pkl`, `lib_semi.pkl`, `lib_caps.pkl`).
+
+**Document templates** (`src/study.py`, `src/plan.py`). The document is read with the normal loaders and studied:
+* every character it uses (plus the essentials: a–z, A–Z, 0–9 `. , - ( )`), including ones outside the 174 (é, €, …);
+* a second box for its most frequent characters, so repeated letters are not identical;
+* cursive / semi-cursive: its most frequent **words** (frequency × length, code excluded) and, for cursive, frequent
+  **letter groups** (`th`, `ing`, …). The most frequent words are asked twice;
+* a few **sentences** of the document's own text (short lines, chosen for frequent words and many different letters),
+  written naturally on a line;
+* its **equations** (up to 12), each in a box, written however you normally write maths;
+* a **figure box** per picture, printed as a light-grey line drawing (83 % grey, lighter than the ink threshold) to trace.
+
+**Learning how you write** (`src/style_model.py`). Letters written one per box are neater and more upright than real
+writing, so the sample sentences are measured, and the numbers drive the renderer instead of fixed defaults:
+
+| measured from your sentences | used for |
+|---|---|
+| slant compared with the same text built from your single letters (70 % applied, ≤ ±6.8°) | extra lean of letters/words from boxes |
+| word spacing and how uneven it is | word spacing and its jitter |
+| how far words wander around the line (robust spread) | word height jitter |
+| how much word size varies (robust spread) | word size jitter |
+| slope of each written line | page / line slope |
+| how many neighbouring letters you join | join rate (cursive, semi-cursive) |
+| gaps between separate letters | letter spacing (print, capitals) |
+
+Each sentence is also split into words at its widest gaps (only when the gaps clearly separate the expected number of
+words), each word is scaled to your letter size, checked against the width your letters predict for it (words that
+ran off the box or were split wrongly are dropped) and kept as an extra sample of that word, written in context. Your
+handwritten equations are used as they are wherever the same equation appears.
+
+*Why not a neural network?* A real handwriting-synthesis model (Graves-style RNN or a diffusion model) needs a large
+dataset of recorded pen strokes and GPU training, and would add a deep-learning framework of several hundred MB to the
+downloadable app; pre-trained models write in generic styles, not yours. Measuring your own samples keeps the result
+personal, explainable and fast on any computer.
+
+The plan is saved as JSON next to the PDF; `calibrate --template` reads it. Every page carries a 12-square **page code**
+(sync bit, page number, template id, parity) at the bottom, so photos can be given in any order and photos of another
+template are refused; photos of the universal template are recognised automatically.
+
+**Writing cursive** (`src/hw_render.py`, `src/strokes.py`). Each word is split into the fewest learned units (dynamic
+programming: whole words > letter groups > letters). Neighbouring lowercase units are joined (in cursive / semi-cursive,
+at your measured join rate). Joins follow the pen: each sample is thinned to its centre line (Zhang-Suen), its stroke
+ends are found, and the join leaves where the previous letter's stroke *ends*, in the direction the pen was moving,
+and arrives where the next letter's stroke *starts* (a, c, d, g, o, q are entered from the top of the bowl). The join
+is a curve with the measured stroke width, thinner in the middle like a quick upstroke, starting and ending inside the
+letters' own ink, softened and textured like photographed ink. Code is always written letter by letter.
+
+**Every copy of a letter is different**: besides size / rotation / shear jitter, each instance is bent by a small
+smooth random field; the tilt of letters drifts smoothly through a word instead of jumping; the same sample is never
+used twice in a row; ink has a fine grain and soft heavier / lighter patches like a ballpoint.
+
+**Figures** (`src/figures.py`). PDFs: embedded pictures, plus clusters of vector drawing (curves, slanted lines, filled
+bars; page backgrounds, code panels, bullets and table rules are ignored) with the short text labels around them.
+Word: inline pictures. Markdown: `![alt](file.png)`. A figure is drawn as YOUR tracing if the template had it,
+otherwise as a sketch: lines stay lines, borders of coloured shapes become outlines, filled areas become hatching, all
+bent slightly by a smooth random displacement field. Text labels of vector figures are erased and re-written in your
+handwriting at their original positions.
+
+![figures](docs/figure_example.png)
+
+**Human touch** (`src/humanize.py`, `--human off|subtle|natural`, default `subtle`). Every effect is clamped so the
+page stays neat:
+
+| effect | range |
+|---|---|
+| line slope (with a per-page up/down tendency) | ≤ 0.6° |
+| left-margin drift (smooth random walk) | ≤ 16 px (1.4 mm) |
+| per-word size / slant / height above the line | ±4 % / ±2.6° / ±5.5 % of cap height |
+| word spacing | −30 … +35 % |
+| ink per word / per page | 86–100 % / 92–100 % |
+| whole page rotated | ≤ 0.4° |
+| `natural` only: slip of the pen (2 letters swapped or a look-alike letter), struck through and rewritten | ≈ 1 per 300 words, prose only |
+
+Randomness that changes the width of a word is seeded by the text itself, so measuring a line for wrapping and drawing
+it always agree. `--seed` gives a differently written copy.
+
+## 7. Repository layout
 
 ```
 src/app.py, app_page.html  the point-and-click app (local web page)
 src/handwrite.py     command line: template | calibrate | convert
 packaging/build.py   builds the double-click app (PyInstaller); .github/workflows builds Win/Mac/Linux
 src/charset.py       the 174 characters             src/layout.py       template geometry
-src/make_template.py generates the PDF template     src/calibrate.py    photos -> library
+src/styles.py        handwriting styles             src/study.py        document -> characters, words, figures
+src/plan.py          template plans + page codes    src/figures.py      find figures, sketch / trace guides
+src/humanize.py      bounded human imperfections
+src/make_template.py draws any template plan        src/calibrate.py    photos -> library
 src/loaders.py       pdf / docx / md readers        src/blocks.py       blocks -> handwritten pages
 src/hw_render.py     Page, Pen, markup renderer     src/doclib.py       page/table/code layout
 src/normalize.py     text clean-up
 src/legacy/          the first prototype pipeline (hand-tuned for one set of photos)
 examples/            sample library, source PDF, outputs, build_doc.py (hand-authored 17-page example)
-tests/               run_e2e.sh, simulate_photos.py (fake phone photos), sample.docx/.md
+tests/               run_e2e.sh, e2e.py, smoke_app.py, simulate_photos.py (fake phone photos), sample.docx/.md,
+                     figure_doc.md + chart.png (cursive document template with a figure)
 ```
 
-## 7. Honest limits
+## 8. Honest limits
 
 * **The app was tested as a packaged program on Linux only**; the Windows and macOS builds are produced by the GitHub workflow and have not been run by the author. Please report problems.
 * **Tested with simulated photos** (rotation, perspective, uneven light, blur, noise, JPEG) made from a real handwriting library: all 118 characters drawn were recovered. Please report issues with real photos (different pens, paper, lighting).
-* **One sample per character**: repeated letters differ only by random jitter. Not cursive (letters are not joined).
-* **PDF conversion is heuristic.** Pictures/diagrams are skipped (reported). Tables are only recognised when ruled; some text boxes may come out as bullets. Bullet symbols drawn as vector shapes are not detected (indentation is used instead). Formulas in a PDF are only reproduced when they appear as LaTeX source; typeset maths is read as plain text.
+* **Cursive is assembled**: whole words come straight from your photos (word boxes and sentences); other words are joined from letters and letter groups with a computed pen stroke. Those joins follow your strokes' directions but are still a model of your joins, not your joins; the more of the document's words you have written (word boxes, sentences, earlier templates), the less of it is assembled. Everything was tested with simulated photos made from the (print) sample library, not with a real cursive hand yet.
+* **Learning from sentences needs clear word spaces**: a line whose word gaps cannot be told from letter gaps is used for slant only.
+* **Figures**: text that is baked into a picture (a screenshot, a PNG chart) cannot be re-written by hand and keeps its typed look in the automatic sketch; trace it on the template instead. Vector figure detection is heuristic. Colour is not kept: everything is drawn in the chosen ink.
+* **Markdown pictures** must be uploaded with the .md file in the app (same folder on the command line).
+* **PDF conversion is heuristic.** Tables are only recognised when ruled; some text boxes may come out as bullets. Bullet symbols drawn as vector shapes are not detected (indentation is used instead). Formulas in a PDF are only reproduced when they appear as LaTeX source; typeset maths is read as plain text.
 * Unsupported characters (accents, emoji, CJK …) are skipped and reported; accents are dropped to the base letter.
 * The template font labels need DejaVu Sans (or Arial Unicode) for Greek/maths labels; otherwise Unicode codes are printed.
 * Keep your photos private if you publish the repo; `samples/` and `work/lib.pkl` are your handwriting.
 
-## 8. License
+## 9. License
 MIT (add a `LICENSE`).
