@@ -9,7 +9,7 @@ Steps per photo:
 """
 import math, os, pickle, sys
 import cv2, numpy as np
-import charset, layout as L, plan as PL, styles
+import charset, layout as L, plan as PL, styles, style_model
 from imgio import imread, imwrite
 
 INK_RATIO = 0.72          # pixel darker than 72% of local paper brightness = ink
@@ -114,7 +114,7 @@ def cut_cell(ratio, cell, thr=INK_RATIO):
     if len(inkb) == 0:
         return None, []
     below = float(inkb.max() - base_in_crop)            # >0: ink hangs below the baseline
-    return dict(alpha=alpha, h=int(yb - ya + 1), w=int(xb - xa + 1), pad=pad, below=below), warns
+    return dict(alpha=alpha, h=int(yb - ya + 1), w=int(xb - xa + 1), pad=pad, below=below, base=float(base_in_crop)), warns
 
 
 def cut_glyph(ratio, idx, ch, thr=INK_RATIO):
@@ -208,6 +208,7 @@ def calibrate(photos, out_path, debug_dir=None, thr=INK_RATIO, log=print, plan=N
         ratios.append(ink_ratio(warped))
     order = _order_photos(photos, ratios, plan, log)
     lib, alts, figs, missing, warnings = {}, {}, {}, [], []
+    lines, formulas = [], {}
     nchars = 0
     for pi, cells in enumerate(plan['pages']):
         k = order[pi]
@@ -217,10 +218,10 @@ def calibrate(photos, out_path, debug_dir=None, thr=INK_RATIO, log=print, plan=N
             os.makedirs(debug_dir, exist_ok=True)
             vis = warped.copy()
             for cell in cells:
-                if cell['k'] in ('char', 'word', 'figure'):
+                if cell['k'] in ('char', 'word', 'figure', 'sentence', 'formula'):
                     a, b, c, d = PL.write_rect_px(cell)
                     cv2.rectangle(vis, (a, b), (c, d), (0, 160, 0), 3)
-                    if cell['k'] != 'figure':
+                    if cell['k'] not in ('figure',):
                         cv2.line(vis, (a, PL.baseline_px(cell)), (c, PL.baseline_px(cell)), (0, 0, 255), 2)
             imwrite(os.path.join(debug_dir, 'rectified_%d.jpg' % (pi + 1)), cv2.resize(vis, None, fx=0.5, fy=0.5))
         for cell in cells:
@@ -229,6 +230,13 @@ def calibrate(photos, out_path, debug_dir=None, thr=INK_RATIO, log=print, plan=N
                 f = cut_figure(ratio, cell, thr)
                 if f is not None:
                     figs[cell['key']] = f
+                continue
+            if t in ('sentence', 'formula'):
+                g, _ = cut_cell(ratio, cell, thr)
+                if g is not None and t == 'sentence':
+                    lines.append((cell['t'], g['alpha'], g['base']))
+                elif g is not None:
+                    formulas[cell['key']] = g
                 continue
             if t not in ('char', 'word'):
                 continue
@@ -263,7 +271,18 @@ def calibrate(photos, out_path, debug_dir=None, thr=INK_RATIO, log=print, plan=N
     if not caps:
         raise CalibrationError('no capital letters were found; they are needed to measure your writing size')
     cap = float(np.median(caps))
-    old_figs = {}
+    # how you write running text: measured from the sample sentences (style_model.py)
+    model, nat_words, report = style_model.learn(lines, lib, style)
+    nnat = 0
+    for key, gs in nat_words.items():
+        if key in lib:
+            lib[key]['alts'] = list(lib[key].get('alts', [])) + gs
+        else:
+            lib[key] = gs[0]
+            if gs[1:]:
+                lib[key]['alts'] = gs[1:]
+        nnat += len(gs)
+    old_figs, old_forms, old_model = {}, {}, None
     if merge and os.path.exists(merge):
         try:
             old = pickle.load(open(merge, 'rb'))
@@ -277,14 +296,25 @@ def calibrate(photos, out_path, debug_dir=None, thr=INK_RATIO, log=print, plan=N
                     lib[key] = g
                     kept += 1
             old_figs = old.get('figures', {})
+            old_forms = old.get('formulas', {})
+            old_model = old.get('model')
             if kept:
                 log('kept %d glyphs/words from your earlier %s library' % (kept, style))
     old_figs.update(figs)
+    old_forms.update(formulas)
+    if not lines and old_model:                           # no sentences this time: keep what was learned before
+        model = old_model
     nword = sum(1 for g in lib.values() if g.get('word'))
-    pickle.dump(dict(lib=lib, cap=cap, version=3, style=style, figures=old_figs, template=plan['id']), open(out_path, 'wb'))
+    pickle.dump(dict(lib=lib, cap=cap, version=3, style=style, figures=old_figs, formulas=old_forms, model=model,
+                     template=plan['id']), open(out_path, 'wb'))
     log('glyphs: %d of %d, capital height %.0f px' % (sum(1 for key in lib if len(key) == 1 and key in planned), nchars, cap))
-    if nword or figs or alts:
-        log('also learned: %d words / letter groups, %d second samples, %d drawings' % (nword, sum(len(v) for v in alts.values()), len(figs)))
+    if nword or figs or alts or formulas:
+        log('also learned: %d words / letter groups, %d second samples, %d drawings, %d equations, %d words from your '
+            'sentences' % (nword, sum(len(v) for v in alts.values()), len(figs), len(formulas), nnat))
+    if report:
+        log('your writing: ' + '; '.join(report))
+    elif lines:
+        log('your writing: the sentences could not be measured (write them on the line, with clear spaces between words)')
     if missing:
         log('empty boxes (these characters will be skipped when writing): ' + ' '.join(missing))
     for w in warnings:

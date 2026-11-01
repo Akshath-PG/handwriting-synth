@@ -27,6 +27,7 @@ def render(blocks, out_pdf, markup=False, log=print, human='subtle', seed=1):
     caps = styles.get(hw_render.STYLE)['caps']
     dropped_all = set()
     nfig = mine = 0
+    nform = [0, 0]
 
     def C(t, keep=''):
         if caps:
@@ -55,7 +56,11 @@ def render(blocks, out_pdf, markup=False, log=print, human='subtle', seed=1):
             d.numbered(b[1], C(b[2], MK if markup else ''))
         elif k == 'formula':
             Pen.MARKUP = True
-            d.formula(C(b[1], MK))
+            import plan
+            mine_f = hw_render.FORMULAS.get(plan.formula_key(b[1].strip()))
+            d.formula(C(b[1], MK), own=mine_f)
+            nform[0] += 1
+            nform[1] += mine_f is not None
             Pen.MARKUP = markup
         elif k == 'code':
             d.code([C(l) if l.strip() else '' for l in b[1]], raw=True)
@@ -74,6 +79,8 @@ def render(blocks, out_pdf, markup=False, log=print, human='subtle', seed=1):
     ims = d.close()
     ims[0].save(out_pdf, save_all=True, append_images=ims[1:], resolution=300)
     log('wrote %s (%d pages)' % (out_pdf, len(ims)))
+    if nform[1]:
+        log('equations: %d of %d written from your template' % (nform[1], nform[0]))
     if nfig:
         log('figures: %d drawn by you (from the template), %d sketched automatically' % (mine, nfig - mine))
     if dropped_all:

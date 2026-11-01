@@ -5,7 +5,8 @@ Turn **any PDF, Word, Markdown or text file** into pages written in **your own h
 
 ```
  your document ─► choose a style ─► study the document ─► a template made for it (its letters, its most used
-                                                          words written joined-up, a box to trace each figure)
+                                                          words written joined-up, a few of its own sentences,
+                                                          its equations, a box to trace each figure)
         print, fill in, photograph (any order) ─► calibrate ─► your glyph + word + drawing library
                                                                               │
         the document ──► convert (+ small human imperfections) ──► handwritten PDF
@@ -183,17 +184,49 @@ its style; each style has its own library file (`lib.pkl` for print, `lib_cursiv
 * a second box for its most frequent characters, so repeated letters are not identical;
 * cursive / semi-cursive: its most frequent **words** (frequency × length, code excluded) and, for cursive, frequent
   **letter groups** (`th`, `ing`, …). The most frequent words are asked twice;
+* a few **sentences** of the document's own text (short lines, chosen for frequent words and many different letters),
+  written naturally on a line;
+* its **equations** (up to 12), each in a box, written however you normally write maths;
 * a **figure box** per picture, printed as a light-grey line drawing (83 % grey, lighter than the ink threshold) to trace.
+
+**Learning how you write** (`src/style_model.py`). Letters written one per box are neater and more upright than real
+writing, so the sample sentences are measured, and the numbers drive the renderer instead of fixed defaults:
+
+| measured from your sentences | used for |
+|---|---|
+| slant compared with the same text built from your single letters (70 % applied, ≤ ±6.8°) | extra lean of letters/words from boxes |
+| word spacing and how uneven it is | word spacing and its jitter |
+| how far words wander around the line (robust spread) | word height jitter |
+| how much word size varies (robust spread) | word size jitter |
+| slope of each written line | page / line slope |
+| how many neighbouring letters you join | join rate (cursive, semi-cursive) |
+| gaps between separate letters | letter spacing (print, capitals) |
+
+Each sentence is also split into words at its widest gaps (only when the gaps clearly separate the expected number of
+words), each word is scaled to your letter size, checked against the width your letters predict for it (words that
+ran off the box or were split wrongly are dropped) and kept as an extra sample of that word, written in context. Your
+handwritten equations are used as they are wherever the same equation appears.
+
+*Why not a neural network?* A real handwriting-synthesis model (Graves-style RNN or a diffusion model) needs a large
+dataset of recorded pen strokes and GPU training, and would add a deep-learning framework of several hundred MB to the
+downloadable app; pre-trained models write in generic styles, not yours. Measuring your own samples keeps the result
+personal, explainable and fast on any computer.
 
 The plan is saved as JSON next to the PDF; `calibrate --template` reads it. Every page carries a 12-square **page code**
 (sync bit, page number, template id, parity) at the bottom, so photos can be given in any order and photos of another
 template are refused; photos of the universal template are recognised automatically.
 
-**Writing cursive** (`src/hw_render.py`). Each word is split into the fewest learned units (dynamic programming:
-whole words > letter groups > letters). Neighbouring lowercase units are joined (always in cursive, ~45 % in
-semi-cursive): the next unit is placed so its *entry point* (left end of its ink along the bottom of the x-height band,
-where lead-in strokes are) follows the previous unit's *exit point*, and a thin Bézier pen stroke connects them. Code
-blocks are always written letter by letter.
+**Writing cursive** (`src/hw_render.py`, `src/strokes.py`). Each word is split into the fewest learned units (dynamic
+programming: whole words > letter groups > letters). Neighbouring lowercase units are joined (in cursive / semi-cursive,
+at your measured join rate). Joins follow the pen: each sample is thinned to its centre line (Zhang-Suen), its stroke
+ends are found, and the join leaves where the previous letter's stroke *ends*, in the direction the pen was moving,
+and arrives where the next letter's stroke *starts* (a, c, d, g, o, q are entered from the top of the bowl). The join
+is a curve with the measured stroke width, thinner in the middle like a quick upstroke, starting and ending inside the
+letters' own ink, softened and textured like photographed ink. Code is always written letter by letter.
+
+**Every copy of a letter is different**: besides size / rotation / shear jitter, each instance is bent by a small
+smooth random field; the tilt of letters drifts smoothly through a word instead of jumping; the same sample is never
+used twice in a row; ink has a fine grain and soft heavier / lighter patches like a ballpoint.
 
 **Figures** (`src/figures.py`). PDFs: embedded pictures, plus clusters of vector drawing (curves, slanted lines, filled
 bars; page backgrounds, code panels, bullets and table rules are ignored) with the short text labels around them.
@@ -244,7 +277,8 @@ tests/               run_e2e.sh, e2e.py, smoke_app.py, simulate_photos.py (fake 
 
 * **The app was tested as a packaged program on Linux only**; the Windows and macOS builds are produced by the GitHub workflow and have not been run by the author. Please report problems.
 * **Tested with simulated photos** (rotation, perspective, uneven light, blur, noise, JPEG) made from a real handwriting library: all 118 characters drawn were recovered. Please report issues with real photos (different pens, paper, lighting).
-* **Cursive is assembled**: whole words and letter groups come straight from your photos, other words are joined from letters with a drawn connecting stroke. The connection points are found automatically and can look less fluid than your real joins; fill the word boxes for the best result. The cursive pipeline was tested with simulated photos made from the (print) sample library, not with a real cursive hand yet.
+* **Cursive is assembled**: whole words come straight from your photos (word boxes and sentences); other words are joined from letters and letter groups with a computed pen stroke. Those joins follow your strokes' directions but are still a model of your joins, not your joins; the more of the document's words you have written (word boxes, sentences, earlier templates), the less of it is assembled. Everything was tested with simulated photos made from the (print) sample library, not with a real cursive hand yet.
+* **Learning from sentences needs clear word spaces**: a line whose word gaps cannot be told from letter gaps is used for slant only.
 * **Figures**: text that is baked into a picture (a screenshot, a PNG chart) cannot be re-written by hand and keeps its typed look in the automatic sketch; trace it on the template instead. Vector figure detection is heuristic. Colour is not kept: everything is drawn in the chosen ink.
 * **Markdown pictures** must be uploaded with the .md file in the app (same folder on the command line).
 * **PDF conversion is heuristic.** Tables are only recognised when ruled; some text boxes may come out as bullets. Bullet symbols drawn as vector shapes are not detected (indentation is used instead). Formulas in a PDF are only reproduced when they appear as LaTeX source; typeset maths is read as plain text.

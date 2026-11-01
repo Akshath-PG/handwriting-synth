@@ -6,6 +6,9 @@ WORD = re.compile(r"[A-Za-z]+(?:'[a-z]+)?")
 MARKUP_CMD = re.compile(r'\\[A-Za-z]')
 
 
+PROSE = []
+
+
 def _texts(blocks, markup):
     """Every piece of text the renderer will write (and, separately, the code lines), plus the glyphs maths markup
     draws."""
@@ -18,6 +21,10 @@ def _texts(blocks, markup):
             out.append(b[1]); out.append('-' if (len(b) < 3 or b[2] == 0) else '·')
         elif k == 'num':
             out.append('%d. %s' % (b[1], b[2]))
+        if k in ('p', 'bullet'):
+            PROSE.append(b[1])
+        elif k == 'num':
+            PROSE.append(b[2])
         elif k == 'code':
             out += b[1]
             code += b[1]
@@ -47,8 +54,11 @@ def _drawable(c):
 def study(blocks, markup, style):
     """Return a summary dict used by plan.document_plan()."""
     st = styles.get(style)
+    del PROSE[:]
     texts, extra, code = _texts(blocks, markup)
+    prose = [MARKUP_CMD.sub('', t) if markup else t for t in PROSE]
     code = set(code)
+    formulas = list(dict.fromkeys(b[1].strip() for b in blocks if b[0] == 'formula' and b[1].strip()))
     if st['caps']:
         texts = [styles.upper_text(t) for t in texts]
     chars = collections.Counter()
@@ -71,8 +81,63 @@ def study(blocks, markup, style):
                 words[w] += 1
     figs = [b[1] for b in blocks if b[0] == 'figure']
     nwords = sum(len(WORD.findall(t)) for t in texts)
-    return dict(style=style, chars=chars, words=words, figures=figs, nwords=nwords,
+    if st['caps']:
+        prose = [styles.upper_text(t) for t in prose]
+    return dict(style=style, chars=chars, words=words, figures=figs, nwords=nwords, prose=prose, formulas=formulas,
                 nblocks=sum(1 for b in blocks if b[0] != 'pagebreak'))
+
+
+def pick_lines(prose, allowed, words, n, maxlen=34):
+    """n short lines of the document's own text (whole words, at most maxlen characters) to write as sample
+    sentences: ones full of the document's frequent words and of many different letters."""
+    if n <= 0:
+        return []
+    allowed = set(allowed) | {' '}
+    cands = []
+    for t in prose:
+        for sent in re.split(r'(?<=[.!?;:])\s+', t):
+            toks = sent.split()
+            i = 0
+            while i < len(toks):
+                line = []
+                j = i
+                while j < len(toks) and len(' '.join(line + [toks[j]])) <= maxlen:
+                    line.append(toks[j]); j += 1
+                if len(line) >= 4:
+                    txt = ' '.join(line)
+                    if all(c in allowed for c in txt) and sum(c.isalpha() for c in txt) >= 0.7 * len(txt.replace(' ', '')):
+                        cands.append(txt)
+                i = max(j, i + 1)
+    chosen, seen_letters, seen = [], set(), set()
+    while cands and len(chosen) < n:
+        def score(tx):
+            ws = [w.strip('.,;:!?()').lower() for w in tx.split()]
+            return (sum(words.get(w, 0) ** 0.5 for w in ws) + 2.0 * len(set(tx.lower()) - seen_letters - {' '})
+                    - 3.0 * len(set(ws) & seen))
+        best = max(cands, key=score)
+        cands.remove(best)
+        chosen.append(best)
+        seen_letters |= set(best.lower())
+        seen |= {w.strip('.,;:!?()').lower() for w in best.split()}
+    if not chosen:
+        pangram = 'The quick brown fox jumps over the lazy dog'
+        if all(c in allowed for c in pangram):
+            chosen = [pangram[:maxlen].rsplit(' ', 1)[0]]
+    return chosen
+
+
+def readable_formula(t):
+    """Maths markup -> something a person can read on the template: \\f{a}{b} -> (a)/(b), x^{2} -> x^2 ..."""
+    rules = [(r'\\f\{([^{}]*)\}\{([^{}]*)\}', r'(\1)/(\2)'), (r'\\S\{([^{}]*)\}\{([^{}]*)\}', r'Σ[\1..\2]'),
+             (r'\\r\{([^{}]*)\}', r'√(\1)'), (r'\\h\{([^{}]*)\}', r'\1̂'), (r'\\t\{([^{}]*)\}', r'\1̃'),
+             (r'\\M\{([^{}]*)\}', r'[\1]'), (r'\^\{([^{}]*)\}', r'^\1'), (r'_\{([^{}]*)\}', r'_\1')]
+    for _ in range(6):
+        t0 = t
+        for a, b in rules:
+            t = re.sub(a, b, t)
+        if t == t0:
+            break
+    return re.sub(r'\s+', ' ', t).strip()
 
 
 def pick_words(words, n):

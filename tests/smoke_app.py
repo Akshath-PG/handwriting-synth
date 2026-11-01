@@ -75,7 +75,7 @@ def main(*exe):
         simulate_photos.main(tpl2, os.path.join(ROOT, 'examples', 'sample_library.pkl'), photos2, 2, shuffle=True)
         files = [('photos', open(os.path.join(photos2, f), 'rb')) for f in sorted(os.listdir(photos2))]
         r = requests.post(base + '/api/calibrate', files=files).json()
-        assert r['ok'] and r['style'] == 'cursive', r
+        assert r['ok'] and r['style'] == 'cursive' and r['model'], r
         print('learned cursive:', r['learned'])
         st = requests.get(base + '/api/state').json()
         assert st['libs']['cursive'] and st['coverage'] is not None, st

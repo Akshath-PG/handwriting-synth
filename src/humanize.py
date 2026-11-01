@@ -9,6 +9,9 @@ levels
            spacing, each page a fraction of a degree off square, ink level varies from page to page
   natural  + now and then a slip of the pen that is crossed out and written again (about one per page)
 
+When your template had sample sentences, the size / height / spacing / slope numbers are the ones measured from
+your own writing (style_model.py) instead of the defaults, still clamped.
+
 All decisions that change the WIDTH of a word are drawn from a random generator seeded by the text itself
 (word_rng), so measuring a line (for wrapping) and drawing it always agree.
 """
@@ -47,8 +50,14 @@ PLAIN = Word()
 
 
 class Hand:
-    def __init__(self, level='subtle', seed=0):
+    def __init__(self, level='subtle', seed=0, model=None):
         self.level = level_of(level)
+        m = model or {}                                     # measured from your sample sentences, if any
+        self.dy_sd = clamp(m.get('dy_sd', 0.022), 0.008, 0.08)
+        self.size_sd = clamp(m.get('size_sd', 0.018), 0.008, 0.06)
+        self.gap_sd = clamp(m.get('gap_sd', 0.13), 0.05, 0.35)
+        self.slope0 = clamp(m.get('slope', 0.0), -0.8, 0.8)
+        self.slope_sd = clamp(m.get('slope_sd', 0.2), 0.08, 0.45)
         self.r = random.Random(seed * 7919 + 13)
         self.margin = 0.0
         self.trend = self.page_rot = self.slant = 0.0
@@ -60,7 +69,7 @@ class Hand:
         if not self.level:
             return
         g = self.r.gauss
-        self.trend = clamp(g(0, 0.14), -0.3, 0.3)          # degrees: lines on this page tend to run up / down
+        self.trend = clamp(self.slope0 + g(0, 0.14), -0.8, 0.8)   # degrees: lines on this page tend to run up / down
         self.page_rot = clamp(g(0, 0.18), -0.4, 0.4)        # degrees: whole page slightly rotated
         self.slant = clamp(g(0, 0.012), -0.025, 0.025)      # extra shear for this page
         self.ink = clamp(g(0.97, 0.02), 0.92, 1.0)          # how freely the pen flows today
@@ -73,7 +82,7 @@ class Hand:
             return 0.0, 0.0
         g = self.r.gauss
         self.margin = clamp(0.75 * self.margin + g(0, 5), -16, 16)
-        deg = clamp(self.trend + g(0, 0.2), -0.6, 0.6)
+        deg = clamp(self.trend + g(0, self.slope_sd), -1.0, 1.0)
         return self.margin, math.tan(math.radians(-deg))
 
     # ---- once per word (rng = word_rng(text...), so the same word in the same place always gets the same values)
@@ -81,10 +90,10 @@ class Hand:
         if not self.level:
             return PLAIN
         g = rng.gauss
-        return Word(k=1 + clamp(g(0, 0.018), -0.04, 0.04),
+        return Word(k=1 + clamp(g(0, self.size_sd), -2.2 * self.size_sd, 2.2 * self.size_sd),
                     shear=self.slant + clamp(g(0, 0.018), -0.045, 0.045),
                     tint=clamp(g(0.97, 0.03), 0.86, 1.0) * self.ink,
-                    dy=clamp(g(0, 0.022), -0.055, 0.055),       # x CAP: word sits a bit above / below the line
+                    dy=clamp(g(0, self.dy_sd), -2.5 * self.dy_sd, 2.5 * self.dy_sd),   # x CAP: above / below the line
                     rot=clamp(g(0, 0.5), -1.2, 1.2),
                     mistake=self.level >= 2 and letters >= 4 and rng.random() < MISTAKE_RATE)
 
@@ -92,7 +101,7 @@ class Hand:
         """factor for one word space"""
         if not self.level:
             return 1.0
-        return 1 + clamp(rng.gauss(0, 0.13), -0.3, 0.35)
+        return 1 + clamp(rng.gauss(0, self.gap_sd), -0.35, 0.45)
 
 
 def typo(word, rng):

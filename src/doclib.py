@@ -20,7 +20,7 @@ class Doc:
         self.files = []
         self.page = None
         self.seed = seed
-        self.hand = humanize.Hand(human, seed)
+        self.hand = humanize.Hand(human, seed, model=HAND_MODEL)
         self.salt = 0
         self.new_page(first=True)
 
@@ -130,7 +130,9 @@ class Doc:
         self.y += PITCH + after
 
     # ---------- formulas ----------
-    def formula(self, text, extra=0, center=True, scale=1.0, above=50, below=60):
+    def formula(self, text, extra=0, center=True, scale=1.0, above=50, below=60, own=None):
+        if own is not None:
+            return self.own_formula(own, scale, above, below)
         self.need(PITCH + above + below + extra)
         self.y += above
         self.next_salt()
@@ -139,6 +141,24 @@ class Doc:
         x = max(x, LEFT)
         self.pen.run(text, x, self.y + self.wob(), S0 * scale)
         self.y += PITCH * 0.8 + below + extra
+
+    def own_formula(self, g, scale=1.0, above=50, below=60):
+        """An equation exactly as YOU wrote it on the template, at the size of the surrounding writing."""
+        from hw_render import strokes_warp
+        s = S0 * scale
+        a = g['alpha']
+        h, w = a.shape
+        k = min(s, (RIGHT - LEFT) / float(w))
+        img = cv2.resize(a, (max(int(w * k), 1), max(int(h * k), 1)), interpolation=cv2.INTER_AREA)
+        if self.hand.level:
+            img = strokes_warp(img, self.pen.r.random(), amp=0.6, cell=40)
+        up, down = g['base'] * k, (h - g['base']) * k
+        self.need(up + down + above + below)
+        self.y += above
+        base = self.y + up * 0.6 + self.wob()
+        x = (LEFT + RIGHT) / 2.0 - img.shape[1] / 2.0 + self.pen.r.gauss(0, 12)
+        self.page.blit(img, max(x, LEFT), base - g['base'] * k, strength=0.95 * self.hand.ink)
+        self.y = base + down + below
 
     # ---------- tables ----------
     def table(self, colw, rows, scale=0.88, header=True, pad=26, rowmin=84):

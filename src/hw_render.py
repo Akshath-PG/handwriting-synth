@@ -1,7 +1,7 @@
 import os, pickle, cv2, numpy as np, random, math, re
 
 from config import D, U
-import config, humanize, styles
+import config, humanize, strokes, styles
 
 # $HW_LIB is read now, not when config was first imported (the command line sets it after importing config)
 LIB_PATH = os.environ.get('HW_LIB') or config.LIB
@@ -12,6 +12,12 @@ CAP = P['cap']          # cap height in library px
 # handwriting style: $HW_STYLE overrides the style the library was made with
 STYLE = os.environ.get('HW_STYLE') or P.get('style') or 'print'
 JOIN = styles.get(STYLE)['joins']
+MODEL = P.get('model') or {}                        # how you write running text (style_model.py)
+if MODEL.get('join') is not None and STYLE in ('cursive', 'semi') and STYLE == P.get('style'):
+    JOIN = MODEL['join']
+SLANT_FIX = -float(MODEL.get('slant') or 0.0)       # renderer shear: positive leans left
+FORMULAS = P.get('formulas', {})                    # your own handwritten equations, by formula key
+JOIN_GAP = 0.32          # horizontal length of a join, in x-heights
 FIGS = P.get('figures', {})                         # your own drawings of figures, by figure key
 
 INK = np.array([36, 52, 128], np.float32)           # RGB
@@ -80,41 +86,43 @@ def anchor_top_above(ch, var=0):
     return m['h']
 
 
-def _compute_join_points():
-    """Where a pen stroke would enter (left) and leave (right) each sample, near the writing line."""
-    widths = []
-    for ch, gs in SAMPLES.items():
-        for var, g in enumerate(gs):
-            a = g['alpha']
-            m = SMETA[ch][var]
-            mask = (a > 128).astype(np.uint8)
-            ys, xs = np.where(mask > 0)
-            if len(ys) == 0:
-                ys, xs = np.where(a > 0)
-            base = m['t'] + anchor_top_above(ch, var)
-            zone = (ys >= base - 1.15 * XH) & (ys <= base + 0.30 * XH)
-            if zone.sum() < 5:
-                zone = np.ones_like(ys, bool)
-            zx, zy = xs[zone], ys[zone]
-            # joins run along the bottom of the x-height band (where cursive lead-in / lead-out strokes are)
-            low = (zy >= base - 0.5 * XH) & (zy <= base + 0.12 * XH)
-            lx, ly = (zx[low], zy[low]) if low.sum() >= 3 else (zx, zy)
-            xl = lx.min()
-            sel = lx <= xl + 3
-            m['entry'] = (float(lx[sel].mean()), float(ly[sel].mean()))
-            xr = lx.max()
-            sel = lx >= xr - 3
-            m['exit'] = (float(lx[sel].mean()), float(ly[sel].mean()))
-            m['exit_out'] = float(zx.max() - xr)              # ink that sticks out right of the exit point
-            if var == 0 and len(ch) == 1 and ch.isalpha() and ch.isascii():
-                cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-                per = sum(cv2.arcLength(c, True) for c in cnts)
-                if per > 0:
-                    widths.append(2.0 * mask.sum() / per)
-    return float(np.median(widths)) if widths else 0.08 * CAP
+def stroke_info(ch, var=0):
+    """Pen-stroke features of a sample (entry / exit points and directions, stroke width, ink), computed on first use."""
+    m = SMETA[ch][var]
+    if 'entry' not in m:
+        base = m['t'] + anchor_top_above(ch, var)
+        m.update(strokes.analyse(SAMPLES[ch][var]['alpha'], base, XH))
+    return m
 
 
-STROKE = _compute_join_points()
+def _stroke_width():
+    w = [stroke_info(c)['width'] for c in 'acemnorsuvwxz' if c in SMETA]
+    if not w:
+        w = [stroke_info(c)['width'] for c in list(SMETA)[:12]]
+    return float(np.median(w)) if w else 0.08 * CAP
+
+
+STROKE = _stroke_width()
+# numbers for humanize.Hand, converted to the units it uses (word height jitter in cap heights)
+HAND_MODEL = {}
+if MODEL.get('base_sd') is not None:
+    HAND_MODEL['dy_sd'] = MODEL['base_sd'] * XH / CAP
+for k in ('size_sd', 'gap_sd', 'slope', 'slope_sd'):
+    if MODEL.get(k) is not None:
+        HAND_MODEL[k] = MODEL[k]
+
+
+def strokes_warp(img, seed, amp=1.0, cell=12.0):
+    """Bend a glyph image by a smooth random field (amp px): the same letter never comes out quite the same."""
+    if amp < 0.3:
+        return img
+    h, w = img.shape
+    rng = np.random.default_rng(int(seed * 2 ** 31))
+    gh, gw = int(h / cell) + 2, int(w / cell) + 2
+    dx = cv2.resize(rng.normal(0, 1, (gh, gw)).astype(np.float32), (w, h), interpolation=cv2.INTER_CUBIC) * amp
+    dy = cv2.resize(rng.normal(0, 1, (gh, gw)).astype(np.float32), (w, h), interpolation=cv2.INTER_CUBIC) * amp
+    xx, yy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    return cv2.remap(img, xx + dx, yy + dy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
 class Page:
@@ -129,6 +137,10 @@ class Page:
         v = 1 - 0.018 * (((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2)
         self.img *= v[..., None]
         self.rng = random.Random(seed)
+        # ballpoint ink is never uniform: fine grain plus soft heavier / lighter patches where pressure changed
+        fine = cv2.GaussianBlur(rng.normal(0, 1.0, (H, W)).astype(np.float32), (0, 0), 0.9)
+        small = cv2.resize(rng.normal(0, 1.0, (H // 40 + 2, W // 40 + 2)).astype(np.float32), (W, H), interpolation=cv2.INTER_CUBIC)
+        self.grain = np.clip(0.95 + 0.11 * fine / (fine.std() + 1e-6) * 0.5 + 0.035 * small, 0.8, 1.0).astype(np.float32)
 
     def blit(self, alpha, x, y, strength=0.96):
         h, w = alpha.shape
@@ -137,7 +149,10 @@ class Page:
         x1, y1 = min(x + w, self.W), min(y + h, self.H)
         if x1 <= x0 or y1 <= y0:
             return
-        a = (alpha[y0 - y:y1 - y, x0 - x:x1 - x].astype(np.float32) / 255.0 * strength)[..., None]
+        a = (alpha[y0 - y:y1 - y, x0 - x:x1 - x].astype(np.float32) / 255.0 * strength)
+        if getattr(self, 'grain', None) is not None:
+            a = a * self.grain[y0:y1, x0:x1]
+        a = a[..., None]
         reg = self.img[y0:y1, x0:x1]
         self.img[y0:y1, x0:x1] = reg * (1 - a) + INK[None, None, :] * a
 
@@ -193,6 +208,8 @@ class Pen:
         self.plain = False         # True: letter by letter, never joined (code)
         self._depth = 0
         self.last = None
+        self._tilt = 0.0
+        self._lastvar = {}
 
     # ---- raw glyph ----
     def glyph_w(self, ch, s, var=0):
@@ -215,10 +232,18 @@ class Pen:
         r = self.r
         long_unit = len(ch) > 1
         sc = s * (1 + r.gauss(0, (0.012 if long_unit else 0.025) * self.j))
-        ang = rot if rot is not None else r.gauss(0, (0.5 if long_unit else 1.4) * self.j)
-        shear = shear0 + r.gauss(0, (0.012 if long_unit else 0.025) * self.j)
+        if rot is None:                     # tilt drifts from letter to letter instead of jumping at random
+            self._tilt = max(-2.5, min(2.5, 0.6 * self._tilt + r.gauss(0, (0.4 if long_unit else 0.9) * self.j)))
+            ang = self._tilt
+        else:
+            ang = rot
+        shear = shear0 + r.gauss(0, (0.008 if long_unit else 0.015) * self.j)
+        if not SAMPLES[ch][var].get('natural'):        # written in a box: give it the slant of your sentences
+            shear += SLANT_FIX
         h0, w0 = a.shape
         resized = cv2.resize(a, (max(int(w0 * sc), 1), max(int(h0 * sc), 1)), interpolation=cv2.INTER_AREA)
+        if self.hand.level:                 # no two copies of a letter have exactly the same shape
+            resized = strokes_warp(resized, r.random(), amp=0.018 * XH * sc * self.j, cell=max(0.45 * XH * sc, 6))
         top_above = anchor_top_above(ch, var) * s
         ink_t = m['t'] * sc
         ink_l = m['l'] * sc
@@ -238,8 +263,24 @@ class Pen:
             Y = pt[1] * sc + pad
             return (px + M[0, 0] * X + M[0, 1] * Y + M[0, 2], py + M[1, 0] * X + M[1, 1] * Y + M[1, 2])
 
-        self.last = dict(entry=mp(m['entry']), exit=mp(m['exit']), sc=sc)
+        si = stroke_info(ch, var)
+
+        def md(v):
+            d = (M[0, 0] * v[0] + M[0, 1] * v[1], M[1, 0] * v[0] + M[1, 1] * v[1])
+            n = math.hypot(*d) or 1.0
+            return (d[0] / n, d[1] / n)
+
+        self.last = dict(entry=mp(si['entry']), exit=mp(si['exit']), entry_dir=md(si['entry_dir']),
+                         exit_dir=md(si['exit_dir']), width=si['width'] * sc, ink=si['ink'] * 0.95 * tint, sc=sc)
         return wpx
+
+    def join(self, a, b, tint=1.0):
+        """Pen stroke from where glyph a's stroke ends to where glyph b's starts, continuing both strokes' directions."""
+        out = strokes.join_alpha(a['exit'], a['exit_dir'], a['width'], b['entry'], b['entry_dir'], b['width'],
+                                 ink=min(a['ink'], b['ink']) * tint, seed=self.r.randrange(1 << 30))
+        if out is not None:
+            alpha, x0, y0 = out
+            self.p.blit(alpha, x0, y0, strength=1.0)
 
     def connector(self, p0, p3, sc, tint=1.0):
         dx = p3[0] - p0[0]
@@ -271,6 +312,8 @@ class Pen:
 
     # ---- layout helpers ----
     def space(self, s):
+        if MODEL.get('word_gap'):
+            return MODEL['word_gap'] * XH * s
         return 0.66 * CAP * s
 
     def joinable(self, a, b):
@@ -278,7 +321,7 @@ class Pen:
         return JOIN > 0 and not self.plain and a.isalpha() and b.isalpha() and a.islower() and b.islower()
 
     def gap(self, a, b, s):
-        base = 0.045 * CAP * s
+        base = (MODEL['letter_gap'] * XH if MODEL.get('letter_gap') else 0.045 * CAP) * s
         if a in '.,:;·' or b in '.,:;':
             base *= 0.6
         if a in '(([{' or b in ')])}':
@@ -371,11 +414,15 @@ class Pen:
             key = FALLBACK.get(u, u)
             if key not in SMETA:
                 continue
-            var = rng.randrange(len(SAMPLES[key])) if len(SAMPLES[key]) > 1 else 0
-            m = SMETA[key][var]
+            nvar = len(SAMPLES[key])
+            var = rng.randrange(nvar) if nvar > 1 else 0
+            if nvar > 1 and var == self._lastvar.get(key):      # the same sample twice in a row looks stamped
+                var = (var + 1 + rng.randrange(nvar - 1)) % nvar
+            self._lastvar[key] = var
+            m = stroke_info(key, var)
             joined = exit_x is not None and self.joinable(prev, key[0]) and rng.random() < JOIN
             if joined:
-                xl = max(exit_x + 0.07 * CAP * s - (m['entry'][0] - m['l']) * s, x + 0.01 * CAP * s)
+                xl = max(exit_x + JOIN_GAP * XH * s - (m['entry'][0] - m['l']) * s, x - 0.05 * XH * s)
             else:
                 if prev and prev != ' ':
                     x += self.gap(prev, key[0], s)
@@ -384,8 +431,8 @@ class Pen:
                 self.draw_glyph(key, xl, base + hw.dy * CAP * s, s, tint=color * hw.tint, var=var, shear0=hw.shear,
                                 rot=(hw.rot if len(key) > 1 else None) if self.hand.level else None)
                 if joined and exit_pt is not None and self.last:
-                    self.connector(exit_pt, self.last['entry'], self.last['sc'], tint=color * hw.tint)
-                exit_pt = self.last['exit'] if self.last else None
+                    self.join(exit_pt, self.last, tint=color * hw.tint)
+                exit_pt = dict(self.last) if self.last else None
             exit_x = xl + (m['exit'][0] - m['l']) * s
             x = xl + m['w'] * s
             prev = key[-1]

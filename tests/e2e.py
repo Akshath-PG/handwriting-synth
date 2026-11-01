@@ -60,12 +60,13 @@ def main():
     out = run([HW, 'calibrate'] + [os.path.join(photos2, 'photo_%d.jpg' % i) for i in range(1, n + 1)] +
               ['--template', os.path.join(tmp, 'doc template.json')], env)
     assert os.path.exists(os.path.join(home, 'lib_cursive.pkl')), out
-    assert 'words / letter groups' in out and '1 drawings' in out, out
+    assert 'words / letter groups' in out and '1 drawings' in out and '1 equations' in out, out
+    assert 'your writing:' in out and 'words from your sentences' in out, out
     if n > 1:
         assert 'page order' in out, out
     o = os.path.join(tmp, 'cursive.pdf')
     out = run([HW, 'convert', doc, '-o', o, '--style', 'cursive', '--human', 'natural'], env)
-    assert '1 drawn by you' in out, out
+    assert '1 drawn by you' in out and 'equations: 1 of 1' in out, out
     print('  cursive document template (%d pages) -> %d page(s)' % (n, pages(o)))
     # photos of the universal template are recognised even when a document template is given
     out = run([HW, 'calibrate'] + [os.path.join(photos, 'photo_%d.jpg' % i) for i in (1, 2, 3, 4)] +

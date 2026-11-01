@@ -2,7 +2,7 @@
 template - the universal 174-character one or one made for a particular document - is handled the same way.
 
 plan = {version, id, style, source, summary, pages: [[cell, ...], ...]}
-cell = {k: 'char' | 'word' | 'figure' | 'note',  t: text,  r: [x, y, w, h] mm,  lh: label strip height mm,
+cell = {k: 'char' | 'word' | 'sentence' | 'formula' | 'figure' | 'note',  t: text (formula: its markup),  r: [x, y, w, h] mm,  lh: label strip height mm,
         b: baseline, mm below the top of the writing area,  alt: 0/1 (second sample),  dots: cursive entry/exit dots,
         key: figure key,  hint: label text}
 
@@ -20,6 +20,7 @@ ROW_H = L.CH
 # page code: 12 squares on the bottom edge. [sync=1, 5 bits page index, 5 bits template id, parity]
 CODE_X0, CODE_Y, CODE_PITCH, CODE_SIDE, CODE_BITS = 120.0, 284.0, 4.4, 3.0, 12
 MAX_PAGES = 31
+MAX_FORMULAS = 12
 
 
 def code_bits(page_index, tpl_id):
@@ -139,6 +140,25 @@ def document_plan(st, source=''):
         for w, alt in [(w, 0) for w in words] + [(w, 1) for w in twice] + [(g, 0) for g in frags]:
             x, y = f.place(word_width_mm(w), L.CH)
             f.cells.append(dict(k='word', t=w, r=[x, y, word_width_mm(w), L.CH], lh=L.LABEL_H, b=L.BASE, alt=alt))
+    lines = study.pick_lines(st.get('prose', []), set(need), st['words'], sty['sentences'])
+    if lines:
+        f.note('SENTENCES from your document. Write each one naturally, as fast and as neatly as you normally would, '
+               'on the line. This shows how you really space, slant and join your writing.')
+        for t in lines:
+            x, y = f.place(WIDTH_MM, L.CH + 2)
+            f.cells.append(dict(k='sentence', t=t, r=[x, y, WIDTH_MM, L.CH + 2], lh=L.LABEL_H, b=L.BASE + 1))
+    forms = st.get('formulas', [])[:MAX_FORMULAS]
+    if forms:
+        f.note('EQUATIONS in your document. Write each one as you would by hand (fractions, powers, symbols as you '
+               'normally write them), sitting on the line.')
+        for t in forms:
+            txt = study.readable_formula(t)
+            tall = any(k in t for k in ('\\f{', '\\S{', '\\M{'))
+            w = min(max(24.0 + 4.6 * len(txt), 50.0), WIDTH_MM)
+            h = 46.0 if tall else 34.0
+            x, y = f.place(w, h)
+            f.cells.append(dict(k='formula', t=t, label=txt, key=formula_key(t), r=[x, y, w, h], lh=L.LABEL_H,
+                                b=(h - L.LABEL_H) * (0.62 if tall else 0.6)))
     for i, fig in enumerate(figs):
         f.newline(3.0)
         ih, iw = fig['img'].shape[:2]
@@ -155,14 +175,19 @@ def document_plan(st, source=''):
     if len(pages) > MAX_PAGES:
         raise ValueError('this document would need a %d-page template (max %d); split it into parts' % (len(pages), MAX_PAGES))
     summary = dict(chars=len(need), alts=len(alts), words=len(words) + len(twice), fragments=len(frags), figures=len(figs),
-                   pages=len(pages), nwords=st['nwords'])
+                   sentences=len(lines), formulas=len(forms), pages=len(pages), nwords=st['nwords'])
     body = json.dumps([[(c['k'], c['t']) for c in p] for p in pages], ensure_ascii=False)
     tid = zlib.crc32((st['style'] + body).encode('utf-8')) % 31 + 1
     return dict(version=VERSION, id=tid, style=st['style'], source=os.path.basename(source), summary=summary,
                 pages=pages, wordlist=words, fragments=frags)
 
 
-def cells(plan, kinds=('char', 'word', 'figure')):
+def formula_key(text):
+    import hashlib
+    return 'f:' + hashlib.sha1(''.join(text.split()).encode('utf-8')).hexdigest()[:14]
+
+
+def cells(plan, kinds=('char', 'word', 'figure', 'sentence', 'formula')):
     for pi, page in enumerate(plan['pages']):
         for c in page:
             if c['k'] in kinds:

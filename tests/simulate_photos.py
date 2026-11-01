@@ -49,6 +49,14 @@ def main(tpl, lib, outdir, seed=1, shuffle=False):
                     continue
                 pen.run(cell['t'], x0 + (x1 - x0 - w) / 2, PL.baseline_px(cell) + rng.uniform(-5, 5), s * 0.9, raw=True)
                 written += 1
+            elif cell['k'] == 'sentence':                 # running text: a bit smaller and faster than the boxes
+                pen.run(cell['t'], x0 + 30 + rng.uniform(0, 40), PL.baseline_px(cell) + rng.uniform(-4, 4), s * 0.82, raw=True)
+                written += 1
+            elif cell['k'] == 'formula':
+                H.Pen.MARKUP = True
+                w = pen.width(cell['t'], s * 0.75)
+                pen.run(cell['t'], x0 + max((x1 - x0 - w) / 2, 10), PL.baseline_px(cell), s * 0.75)
+                written += 1
             elif cell['k'] == 'figure':                    # trace the grey guide: grey pixels become pen ink
                 region = page.img[y0:y1, x0:x1]
                 g = region.mean(axis=2)

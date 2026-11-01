@@ -177,12 +177,14 @@ def calibrate():
         code, log = run_cli(args)
     if code:
         return jsonify(ok=False, error=friendly(log))
-    missing, learned, saved = '', '', ''
+    missing, learned, saved, model = '', '', '', ''
     for line in log.splitlines():
         if line.startswith('empty boxes'):
             missing = line.split(':', 1)[1].strip()
         elif line.startswith('also learned:'):
             learned = line.split(':', 1)[1].strip()
+        elif line.startswith('your writing:'):
+            model = line.split(':', 1)[1].strip()
         elif line.startswith('library saved to'):
             saved = line.split('to', 1)[1].strip()
     style = 'print'
@@ -190,7 +192,7 @@ def calibrate():
         if os.path.basename(saved) == styles.lib_name(s):
             style = s
     warns = [l[9:] for l in log.splitlines() if l.startswith('warning: ')]
-    return jsonify(ok=True, missing=missing, warnings=warns, learned=learned, style=style,
+    return jsonify(ok=True, missing=missing, warnings=warns, learned=learned, model=model, style=style,
                    style_label=styles.STYLES[style]['label'],
                    sheet='/file/debug/glyph_sheet.png?t=%d' % time.time())
 

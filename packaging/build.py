@@ -13,7 +13,7 @@ args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir
         '--hidden-import', 'handwrite', '--hidden-import', 'make_template', '--hidden-import', 'calibrate',
         '--hidden-import', 'loaders', '--hidden-import', 'blocks', '--hidden-import', 'hw_render', '--hidden-import', 'doclib',
         '--hidden-import', 'styles', '--hidden-import', 'study', '--hidden-import', 'plan', '--hidden-import', 'figures',
-        '--hidden-import', 'humanize', '--hidden-import', 'normalize',
+        '--hidden-import', 'humanize', '--hidden-import', 'normalize', '--hidden-import', 'strokes', '--hidden-import', 'style_model',
         *sum([['--exclude-module', m] for m in ('matplotlib', 'pandas', 'scipy', 'tkinter', 'IPython', 'pytest', 'sympy', 'numba')], []),
         '--distpath', os.path.join(ROOT, 'dist'), '--workpath', os.path.join(ROOT, 'build'), '--specpath', os.path.join(ROOT, 'build')]
 # (macOS: a plain folder like Linux. A .app bundle moves OpenCV's files apart and breaks its loader.)

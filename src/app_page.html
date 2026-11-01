@@ -54,6 +54,8 @@ select{font-size:18px;padding:10px;border-radius:10px;border:1px solid var(--lin
   <li>Print it on normal A4 paper. Use a dark pen.</li>
   <li><b>Letters:</b> one per box, sitting on the solid line. In cursive, write each letter with its joining strokes, from the left dot to the right dot.</li>
   <li><b>Words:</b> write each word in one go, exactly as you would in a sentence.</li>
+  <li><b>Sentences:</b> write them naturally on the line, at your normal speed, with normal spaces between words. Every word you write there is reused, and your spacing, slant and joins are measured from them.</li>
+  <li><b>Equations:</b> write them the way you normally would by hand; they are used exactly as you wrote them.</li>
   <li><b>Figures:</b> trace over the grey drawing (or draw your own). Leave a box empty and the app sketches that figure for you.</li>
   <li>Keep writing inside the boxes. Do not touch the black squares or the small squares at the bottom.</li>
  </ul>
@@ -99,6 +101,8 @@ function showProject(p,cov){if(!p)return;const s=p.summary;
  let h='✅ Studied <b>'+esc(p.name)+'</b> (about '+s.nwords+' words). Your <b>'+esc(state.styles.find(x=>x.id===p.style).label)+'</b> template has <b>'+s.pages+' page'+(s.pages>1?'s':'')+'</b>:<ul>'+
  '<li>'+s.chars+' letters, digits and symbols this document uses'+(s.alts?', and '+s.alts+' of the most used ones a second time':'')+'</li>'+
  (s.words||s.fragments?'<li>'+s.words+' of its most used words and '+s.fragments+' letter groups, to write joined-up'+(p.words&&p.words.length?' (e.g. <i>'+p.words.slice(0,6).map(esc).join(', ')+'</i>)':'')+'</li>':'')+
+ (s.sentences?'<li>'+s.sentences+' short sentences from your document, to write naturally (this teaches the app your real spacing, slant and joins)</li>':'')+
+ (s.formulas?'<li>'+s.formulas+' equation'+(s.formulas>1?'s':'')+' from your document, to write by hand</li>':'')+
  (s.figures?'<li>'+s.figures+' figure'+(s.figures>1?'s':'')+' to trace</li>':'<li>no figures</li>')+'</ul>';
  if(cov){if(!cov.chars.length&&!cov.words&&!cov.figures)h+='<b>Your saved handwriting already covers everything in this template</b>: you can go straight to step 5 (or fill the template anyway for fresh samples).';
   else h+='Your saved handwriting of this style is missing '+[cov.chars.length?cov.chars.length+' character(s)':'',cov.words?cov.words+' word(s)':'',cov.figures?cov.figures+' figure(s)':''].filter(Boolean).join(', ')+'. Fill in the template to add them (boxes you leave empty keep your saved version).'}
@@ -126,6 +130,7 @@ $('calBtn').onclick=async()=>{const b=$('calBtn');b.disabled=true;msg($('calOut'
  try{const r=await (await fetch('/api/calibrate',{method:'POST',body:fd})).json();
   if(!r.ok){msg($('calOut'),'err','⚠ '+esc(r.error))}else{let h='✅ Done! Your <b>'+esc(r.style_label)+'</b> handwriting is saved. Look at the letters and words below: they should all look like yours.';
    if(r.learned)h+='<br>Also learned: '+esc(r.learned)+'.';
+   if(r.model)h+='<br>How you write: '+esc(r.model)+'.';
    if(r.missing)h+='<br><br>These boxes were empty and will be skipped: <b>'+esc(r.missing)+'</b>';
    if(r.warnings.length)h+='<br><br>Check these boxes: '+esc(r.warnings.join('; '));
    h+='<br><img class="sheet" src="'+r.sheet+'">';msg($('calOut'),'good',h);style=r.style;refresh()}}

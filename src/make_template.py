@@ -127,7 +127,7 @@ def make(out, plan=None, figs=None):
                 c.setFillGray(0.5)
                 c.drawString((x + 7) * mm, Y(y + 4.0), cap[:17])
             else:
-                lab = t + ('   (again)' if cell.get('alt') else '')
+                lab = cell.get('label', t) + ('   (again)' if cell.get('alt') else '')
                 c.setFont(font, _fit(c, font, 9, lab, (w - 3) * mm))
                 c.drawString((x + 1.5) * mm, Y(y + 4.4), lab)
             # baseline and guide lines
