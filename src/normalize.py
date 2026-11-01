@@ -7,13 +7,14 @@ LIGS = {'ﬁ': 'fi', 'ﬂ': 'fl', 'ﬀ': 'ff', 'ﬃ': 'ffi', 'ﬄ': 'ffl', ' ':
         '﻿': '', '­': '', '≠': '≠'}
 
 
-def clean(text, lib=None):
-    """Return (text, dropped) where dropped is a set of characters that cannot be drawn."""
+def clean(text, lib=None, keep=''):
+    """Return (text, dropped) where dropped is a set of characters that cannot be drawn.
+    keep: characters to pass through untouched (maths markup syntax such as \\ { } ^ _)."""
     out, dropped = [], set()
     for ch in text:
         ch = LIGS.get(ch, ch)
         for c in ch:
-            if c in '\n ' or lib is None or c in lib or c in "'\"":
+            if c in '\n ' or lib is None or c in lib or c in "'\"" or c in keep:
                 out.append(c)
                 continue
             if unicodedata.combining(c):

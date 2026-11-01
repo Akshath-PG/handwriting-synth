@@ -4,6 +4,7 @@ import re, os, collections
 
 # ------------------------------------------------------------------ text / markdown
 def load_text(path):
+    import figures
     lines = open(path, encoding='utf-8-sig').read().split('\n')
     blocks, buf, code, incode, table = [], [], [], False, []
 
@@ -33,6 +34,13 @@ def load_text(path):
             table.append([c.strip() for c in s.strip('|').split('|')]); continue
         if table:
             flush()
+        mi = figures.MD_IMAGE.match(s)
+        if mi:
+            flush()
+            fig = figures.file_figure(os.path.join(os.path.dirname(os.path.abspath(path)), mi.group(2)))
+            if fig:
+                blocks.append(('figure', fig))
+            continue
         m = re.match(r'^(#{1,6})\s+(.*)', s)
         if m:
             flush(); blocks.append(('h1' if len(m.group(1)) == 1 else 'h2' if len(m.group(1)) == 2 else 'h3', m.group(2)))
@@ -51,7 +59,7 @@ def load_text(path):
 
 # ------------------------------------------------------------------ docx
 def load_docx(path):
-    import docx
+    import docx, figures
     from docx.table import Table
     from docx.text.paragraph import Paragraph
     D = docx.Document(path)
@@ -69,7 +77,9 @@ def load_docx(path):
         elif tag == 'p':
             p = Paragraph(el, D)
             text = p.text.strip('\n')
+            figs = figures.docx_figures(el, D.part)
             if not text.strip():
+                blocks += [('figure', f) for f in figs]
                 continue
             st = (p.style.name or '').lower()
             fonts = [(r.font.name or '').lower() for r in p.runs if r.text.strip()]
@@ -90,6 +100,7 @@ def load_docx(path):
                     blocks.append(('code', [text]))
             else:
                 blocks.append(('p', text.strip())); num = 0
+            blocks += [('figure', f) for f in figs]
     return blocks
 
 
@@ -144,8 +155,8 @@ def _join(a, b):
 
 
 def load_pdf(path, log=print):
-    import pdfplumber
-    blocks, skipped_images = [], 0
+    import pdfplumber, figures
+    blocks, nfig = [], 0
     with pdfplumber.open(path) as pdf:
         cnt = collections.Counter()
         for pg in pdf.pages:
@@ -155,10 +166,13 @@ def load_pdf(path, log=print):
         body = cnt.most_common(1)[0][0] if cnt else 11
         # pass 1: lines per page; drop running headers/footers (same text on many pages near the top/bottom)
         pages = []
-        for pg in pdf.pages:
-            skipped_images += len(pg.images)
-            tables = [t for t in pg.find_tables() if _real_table(t, pg)]
-            boxes = [t.bbox for t in tables]
+        for pi, pg in enumerate(pdf.pages):
+            found = pg.find_tables()
+            tables = [t for t in found if _real_table(t, pg)]
+            figboxes = figures.pdf_figure_boxes(pg, exclude=[t.bbox for t in tables])
+            figs = figures.pdf_figures(path, pg, pi, figboxes)
+            nfig += len(figs)
+            boxes = [t.bbox for t in tables] + figboxes
 
             def keep(o, boxes=boxes):
                 if o.get('object_type') != 'char':
@@ -166,22 +180,22 @@ def load_pdf(path, log=print):
                 cx, cy = (o['x0'] + o['x1']) / 2, (o['top'] + o['bottom']) / 2
                 return not any(b[0] - 1 <= cx <= b[2] + 1 and b[1] - 1 <= cy <= b[3] + 1 for b in boxes)
             parsed = _parse_lines(pg.filter(keep) if boxes else pg)
-            pages.append((pg, tables, parsed))
+            pages.append((pg, tables, parsed, list(zip(figboxes, figs))))
         seen = collections.Counter()
-        for pg, _, parsed in pages:
+        for pg, _, parsed, _ in pages:
             for p in parsed:
                 if p['top'] < 0.1 * pg.height or p['bottom'] > 0.9 * pg.height:
                     seen[re.sub(r'\d+', '#', p['text'])] += 1
         need = max(2, int(0.5 * len(pages)))
-        for pg, tables, parsed in pages:
+        for pg, tables, parsed, _ in pages:
             parsed[:] = [p for p in parsed if not ((p['top'] < 0.1 * pg.height or p['bottom'] > 0.9 * pg.height)
                                                     and seen[re.sub(r'\d+', '#', p['text'])] >= need)]
-        lefts = collections.Counter(round(p['x0']) for _, _, pr in pages for p in pr
+        lefts = collections.Counter(round(p['x0']) for _, _, pr, _ in pages for p in pr
                                     if not p['mono'] and abs(p['size'] - body) < 0.3)
         body_left = lefts.most_common(1)[0][0] if lefts else 0
         # pass 2: group lines into blocks
-        for pg, tables, parsed in pages:
-            items = []
+        for pg, tables, parsed, figs in pages:
+            items = [(b[1], ('figure', f)) for b, f in figs]
             for t in tables:
                 rows = [[(c or '').replace('\n', ' ').strip() for c in r] for r in t.extract()]
                 rows = [r for r in rows if any(r)]
@@ -236,8 +250,9 @@ def load_pdf(path, log=print):
         else:
             out.append(b)
     out = [latex_block(b) for b in out]
-    if skipped_images:
-        log('note: %d picture(s)/diagram(s) in the PDF cannot be rewritten by hand and were skipped' % skipped_images)
+    if nfig:
+        log('note: %d picture(s)/diagram(s) found; they are drawn by hand (your traced drawing if the template had it, '
+            'otherwise a pen sketch)' % nfig)
     return out
 
 
